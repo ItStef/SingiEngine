@@ -1,7 +1,483 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Singi Engine - Space Shooter</title>
+  <meta charset="UTF-8" />
+  <title>SingiEngine – Functional ECS Ship Shooter</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <div id="hint">
+    <span>Arrow keys / WASD</span> — Move &nbsp;|&nbsp;
+    <span>Space</span> — Shoot &nbsp;|&nbsp;
+    <span>Enter</span> — Restart
+    </div>
+
+    <script>
+
+        // Canvas
+        const canvas = document.getElementById('game');
+        const ctx    = canvas.getContext('2d');
+        const Width = canvas.width  = 480;
+        const Height = canvas.height = 640;
+
+
+        // Utils
+        const pipe = (...functions) => arg => functions.reduce((variable, func) => func(variable), arg);
+        const compare = (...functions) => arg => functions.reduceRight((variable, func) => func(variable), arg); //backwards pipe
+
+        const setComponent = (world, entityId, componentName, data) => ({
+            ...world, components: {...world.components,
+                [componentName]: {...world.components[componentName],[entityId]: data}
+            }
+        });
+
+        const removeComponent = (world, entityId, componentName) => {
+            const next = { ...world.components[componentName] };
+            delete next[entityId];
+            return {...world, components: {...world.components,[componentName]: next}
+            };
+        }
+
+        const query = (world, ...componentNames) => 
+            world.entities.filter(entityId => componentNames.reduce((has, component) => 
+            has && entityId in world.components[component], true));
+        
+
+        // World
+        const CREATE_WORLD = {
+            nextEntityId: 1,
+            entities: [],
+            components: {
+                position: {},
+                velocity: {},
+                render: {},
+                player: {},
+                enemy: {},
+                bullet: {},
+                health: {},
+                shootCooldown: {},
+            },
+            score: 0,
+            gameState: 'playing', // 'playing' | 'gameover'
+            fallingStarField: [],
+        }
+
+        const createEntity = world => {
+            const id  = world.nextEntityId;
+            const updatedWorld = { ...world, nextEntityId: id + 1, entities: [...world.entities, id] };
+            return [updatedWorld, id];
+        }
+
+        const addComponent = (world, entityId, componentName, data) => 
+            setComponent(world, entityId, componentName, data);
+        
+        const destroyEntity = (world, entityId) => {
+            const components = Object.keys(world.components).reduce((accumilator, componentName) => {
+                const map = { ...world.components[componentName] };
+                delete map[entityId];
+                return { ...accumilator, [componentName]: map };
+            }, {});
+            return {
+                ...world,
+                entities: world.entities.filter(id => id !== entityId),
+                components
+            };
+        };
+
+        //background falling stars, purely cosmetic
+        const makeFallingStars = count =>
+            Array.from({ length: count }, () => ({
+                x: Math.random() * Width,
+                y: Math.random() * Height,
+                size: Math.random() * 2 + 1,
+                speed: Math.random() * 0.5 + 0.5
+            }));
+
+        const spawnPlayer = world => {
+            const [nextWorld, playerId] = createEntity(world);
+            return pipe(
+                world => addComponent(world, playerId, 'position', { x: Width / 2, y: Height - 100 }),
+                world => addComponent(world, playerId, 'velocity', { velocityX: 0, velocityY: 0 }),
+                world => addComponent(world, playerId, 'render', { shape: 'ship', color: 'cyan', width: 40, height: 50 }),
+                world => addComponent(world, playerId, 'player', {}),
+                world => addComponent(world, playerId, 'health', { value: 3 }),
+                world => addComponent(world, playerId, 'shootCooldown', { cooldown: 0 })
+            )(nextWorld);
+        }
+
+        const spawnEnemyRow = (world, row, collumns) => 
+            Array.from({length: collumns}, (_, collumn) => collumn).reduce((world, column) => {
+                const [nextWorld, enemyId] = createEntity(world);
+                const x = 50 + column * 80;
+                const y = 50 + row * 60;
+                return pipe(
+                    w => addComponent(w, enemyId, 'position', { x, y }),
+                    w => addComponent(w, enemyId, 'velocity', { velocityX: 40, velocityY: 0 }),
+                    w => addComponent(w, enemyId, 'render', { shape: 'enemy', color: 'red', width: 40, height: 30 }),
+                    w => addComponent(w, enemyId, 'enemy', { shootCooldown: Math.random() * 2 + 1 }), //random cooldown between 1 and 3 seconds
+                    w => addComponent(w, enemyId, 'health', { value: 1 })
+                )(nextWorld);
+            }, world);
+
+        const initWorld = () => {
+            const base = { ...CREATE_WORLD, fallingStarField: makeFallingStars(50) };
+            const withPlayer = spawnPlayer(base);
+            return [0, 1, 2].reduce((world, row) => spawnEnemyRow(world, row, 5), withPlayer);
+        }
+
+
+        // Inputs
+        const keysDown = new Set();
+        window.addEventListener('keydown', event => {
+            keysDown.add(event.code);
+            if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Enter'].includes(event.code)) {
+                event.preventDefault(); // Prevent default browser behavior for these keys
+            }
+        });
+        window.addEventListener('keyup', event => { keysDown.delete(event.code) });
+
+        const PLAYER_SPEED = 220; // pixels per second
+
+        const inputSystem = deltaTime => world => {
+            if (world.gameState !== 'playing') return world;
+            const players = query(world, 'player', 'velocity');
+            return players.reduce((world, playerId) => {
+                const velocityX = (keysDown.has('ArrowLeft') || keysDown.has('KeyA') ? -PLAYER_SPEED : 0) + (keysDown.has('ArrowRight') || keysDown.has('KeyD') ? PLAYER_SPEED : 0);
+                const velocityY = (keysDown.has('ArrowUp') || keysDown.has('KeyW') ? -PLAYER_SPEED : 0) + (keysDown.has('ArrowDown') || keysDown.has('KeyS') ? PLAYER_SPEED : 0);
+                return setComponent(world, playerId, 'velocity', { velocityX, velocityY });
+            }, world);
+        };
+
     
+        // Movement
+
+        const ENTITY_BOUNCE_MARGIN = 10; // Margin from the edge of the screen where enemies will bounce
+
+        const movementSystem = deltaTime => world => {
+            if (world.gameState !== 'playing') return world;
+            const movers = query(world, 'position', 'velocity');
+
+            const moved = movers.reduce((world, entityId) => {
+                const position = world.components.position[entityId];
+                const velocity = world.components.velocity[entityId];
+                let newX = position.x + velocity.velocityX * deltaTime;
+                let newY = position.y + velocity.velocityY * deltaTime;
+
+                if (entityId in world.components.player) {
+                    newX = Math.max(0, Math.min(Width - world.components.render[entityId].width, newX));
+                    newY = Math.max(0, Math.min(Height - world.components.render[entityId].height, newY));
+                }
+                return setComponent(setComponent(world, entityId, 'position', { x: newX, y: newY }), entityId, 'velocity', { velocityX: velocity.velocityX, velocityY: velocity.velocityY });
+            }, world);
+
+        const enemies = query(moved, 'enemy', 'position', 'velocity');
+        const hitAWall = enemies.some(enemyId => {
+            const position = moved.components.position[enemyId];
+            const velocity = moved.components.velocity[enemyId];
+            return position.x <= ENTITY_BOUNCE_MARGIN || position.x >= Width - ENTITY_BOUNCE_MARGIN - (moved.components.render[enemyId]?.width ?? 0);
+        });
+
+        if(!hitAWall) return moved;
+
+        return enemies.reduce((world, enemyId) => {
+            const velocity = world.components.velocity[enemyId];
+            const position = world.components.position[enemyId];
+            return setComponent(setComponent(world, enemyId, 'velocity', { velocityX: -velocity.velocityX, velocityY: 0 }),
+                enemyId, 'position', { x: position.x, y: position.y + 24 });}, moved);
+
+        };
+
+        
+        // Shooting
+        const BULLET_SPEED = 300;
+        const SHOOT_COOLDOWN = 0.5; // seconds
+        
+        const spawnBullet = (world, x, y, velocityY, owner, color) => {
+            const [nextWorld, bulletId] = createEntity(world);
+            return pipe(
+                w => addComponent(w, bulletId, 'position', { x, y }),
+                w => addComponent(w, bulletId, 'velocity', { velocityX: 0, velocityY }),
+                w => addComponent(w, bulletId, 'render', { shape: 'bullet', color, width: 5, height: 10 }),
+                w => addComponent(w, bulletId, 'bullet', { owner })
+            )(nextWorld);
+        }
+
+        const shootingSystem = deltaTime => world => {
+            if (world.gameState !== 'playing') return world;
+            const players = query(world, 'player', 'position', 'shootCooldown');
+            
+            return players.reduce((world, entityId) => {
+                const cooldown = world.components.shootCooldown[entityId].cooldown;
+                const newCooldown = Math.max(0, cooldown - deltaTime);
+                const position = world.components.position[entityId];
+                const worldCoolDown = setComponent(world, entityId, 'shootCooldown', { cooldown: newCooldown });
+
+                if (keysDown.has('Space') && newCooldown === 0) {
+                    const worldBullet = spawnBullet(worldCoolDown, position.x, position.y - 30, -BULLET_SPEED, 'player', 'cyan');
+                    return setComponent(worldBullet, entityId, 'shootCooldown', { cooldown: SHOOT_COOLDOWN });
+                }
+            return worldCoolDown;
+            }, world);
+        };
+
+
+        // AI
+        const AI_BULLET_SPEED = 200;
+
+        const aiSystem = deltaTime => world => {
+            if (world.gameState !== 'playing') return world;
+            const enemies = query(world, 'enemy', 'position');
+
+            return enemies.reduce((world, enemyId) => {
+                const enemy = world.components.enemy[enemyId];
+                const newCooldown = enemy.shootCooldown - deltaTime;
+                if (newCooldown <= 0) {
+                    const position = world.components.position[enemyId];
+                    const shotCooldown = 1.2 + Math.random() * 2; //random cooldown between 1.2 and 3.2 seconds
+                    const worldShot = spawnBullet(world, position.x + 18, position.y + 30, AI_BULLET_SPEED, 'enemy', 'red');
+                    return setComponent(worldShot, enemyId, 'enemy', { shootCooldown: shotCooldown });
+                }
+                return setComponent(world, enemyId, 'enemy', { shootCooldown: newCooldown });
+            }, world);
+        };
+
+        
+        // Collision
+
+        const aabb = (ax , ay, aw, ah, bx, by, bw, bh) => ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+
+        const collisionSystem = _ => world => {
+            if (world.gameState !== 'playing') return world;
+
+            const bullets = query(world, 'bullet', 'position');
+            const enemies = query(world, 'enemy', 'position', 'render');
+            const players = query(world, 'player', 'position', 'render', 'health');
+
+            let w = world;
+            let toDestroy = []
+
+            const playerBullets = bullets.filter(bulletId => w.components.bullet[bulletId]?.owner === 'player');
+
+            playerBullets.forEach(bulletId => {
+                const bulletPosition = w.components.position[bulletId];
+                const bulletRender = w.components.render[bulletId];
+
+                enemies.forEach(enemyId => {
+                    if (toDestroy.includes(enemyId) || toDestroy.includes(bulletId)) return; //skip already destroyed enemies
+                    const enemyPosition = w.components.position[enemyId];
+                    const enemyRender = w.components.render[enemyId];
+
+                    if (aabb(bulletPosition.x, bulletPosition.y, bulletRender.width, bulletRender.height,
+                            enemyPosition.x, enemyPosition.y, enemyRender.width, enemyRender.height)) {
+                        toDestroy.push(bulletId, enemyId);
+                        w = { ...w, score: w.score + 100 };
+                };
+            });
+        });
+        
+        const enemyBullets = bullets.filter(bulletId => w.components.bullet[bulletId]?.owner === 'enemy');
+
+        players.forEach(playerId => {
+            const playerPosition = w.components.position[playerId];
+            const playerRender = w.components.render[playerId];
+
+            enemyBullets.forEach(bulletId => {
+                if (toDestroy.includes(playerId) || toDestroy.includes(bulletId)) return; //skip already destroyed players
+                const bulletPosition = w.components.position[bulletId];
+                const bulletRender = w.components.render[bulletId];
+
+                if (aabb(bulletPosition.x, bulletPosition.y, bulletRender.width, bulletRender.height,
+                        playerPosition.x, playerPosition.y, playerRender.width, playerRender.height)) {
+                    toDestroy.push(bulletId);
+                    const newHealth = w.components.health[playerId].value - 1;
+                w = newHealth <= 0
+                    ? { ...destroyEntity(w, playerId), gameState: 'gameover' }
+                    : setComponent(w, playerId, 'health', { value: newHealth });
+                }
+            });
+        });
+
+        w = toDestroy.reduce((w, entityId) => destroyEntity(w, entityId), w);
+
+        const remainingEnemies = query(w, 'enemy');
+        if (remainingEnemies.length === 0 && w.gameState === 'playing') {
+            w = { ...w, gameState: 'gameover', score: w.score + w.lives * 200 };
+        }
+        return w;
+    }
+
+
+    //Bullet Cleanup
+
+    const bulletCleanupSystem = _ => world => {
+        const bullets = query(world, 'bullet', 'position', 'render');
+        const offscreen = bullets.filter(bid => {
+            const pos = world.components.position[bid];
+            return pos.y < -20 || pos.y > Height + 20;
+        });
+        return offscreen.reduce((world, bid) => destroyEntity(world, bid), world);
+    }
+
+
+    //Star System
+
+    const tickStars = deltaTime => world => ({
+        ...world,
+        fallingStarField: world.fallingStarField.map(star => ({
+            ...star,
+            y: (star.y + star.speed * deltaTime * 60) % Height
+        }))
+    });
+
+
+    //Render
+    const drawShip = (ctx, x, y, width, height, color) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = color;
+    // Body
+    ctx.beginPath();
+    ctx.moveTo(0, -height / 2);
+    ctx.lineTo(width / 2, height / 2);
+    ctx.lineTo(-width / 2, height / 2);
+    ctx.closePath();
+    ctx.fill();
+    // Engine glow
+    ctx.fillStyle = '#ff0';
+    ctx.fillRect(-6, height / 2 - 6, 12, 8);
+    ctx.restore();
+    };
+
+    const drawEnemy = (ctx, x, y, width, height, color) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, width / 2, height / 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffd';
+    ctx.beginPath();
+    ctx.ellipse(0, -height / 5, width / 4, height / 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    };
+
+    const drawBullet = (ctx, x, y, width, height, color) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.fillRect(-width / 2, -height / 2, width, height);
+    ctx.restore();
+    };
+
+    const renderSystem = _ => world => {
+    // --- Background ---
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, Width, Height);
+
+    // --- Stars ---
+    world.fallingStarField.forEach(s => {
+        ctx.fillStyle = `rgba(255,255,255,${0.3 + s.size * 0.3})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // --- Entities with render + position ---
+    const renderables = query(world, 'render', 'position');
+    renderables.forEach(eid => {
+        const { x, y }      = world.components.position[eid];
+        const { shape, color, width, height } = world.components.render[eid];
+
+        if (shape === 'ship')   drawShip(ctx, x, y, width, height, color);
+        if (shape === 'enemy')  drawEnemy(ctx, x, y, width, height, color);
+        if (shape === 'bullet') drawBullet(ctx, x, y, width, height, color);
+    });
+
+    // --- HUD: Score ---
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px Segoe UI';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Score: ${world.score}`, 12, 24);
+
+    // --- HUD: Lives (player health) ---
+    const playerIds = query(world, 'player', 'health');
+    if (playerIds.length > 0) {
+        const health = world.components.health[playerIds[0]].value;
+        ctx.fillStyle = '#f44';
+        ctx.textAlign = 'right';
+        ctx.fillText(`❤ ${health}`, Width - 12, 24);
+    }
+
+    // --- Game Over / Win overlay ---
+    if (world.gameState === 'gameover') {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(0, 0, Width, Height);
+
+        const remaining = query(world, 'enemy');
+        const msg = remaining.length === 0 ? 'YOU WIN!' : 'GAME OVER';
+        const col = remaining.length === 0 ? '#4f4' : '#f44';
+
+        ctx.fillStyle = col;
+        ctx.font = 'bold 48px Segoe UI';
+        ctx.textAlign = 'center';
+        ctx.fillText(msg, Width / 2, Height / 2 - 20);
+
+        ctx.fillStyle = '#aaa';
+        ctx.font = '20px Segoe UI';
+        ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
+        ctx.fillText('Press Enter to restart', Width / 2, Height / 2 + 56);
+    }
+        return world;
+    };
+
+    //Restart
+
+    const restartSystem = _ => world => {
+        if (world.gameState === 'gameover' && keysDown.has('Enter')) {
+            keysDown.delete('Enter');
+            return initWorld();
+        }
+        return world;
+    };
+
+    // Main Loop
+    let world = initWorld();
+    let lastTime = null;
+
+    const buildPipeline = deltaTime => pipe(
+        restartSystem(deltaTime),
+        inputSystem(deltaTime),
+        movementSystem(deltaTime),
+        shootingSystem(deltaTime),
+        aiSystem(deltaTime),
+        collisionSystem(deltaTime),
+        bulletCleanupSystem(deltaTime),
+        tickStars(deltaTime),
+        renderSystem(deltaTime), 
+    );
+
+    const gameLoop = timestamp => {
+    if (lastTime === null) lastTime = timestamp;
+    const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap dt to avoid spiral of death
+    lastTime = timestamp;
+
+    // The entire game update is a single pure pipeline call
+    world = buildPipeline(dt)(world);
+
+    requestAnimationFrame(gameLoop);
+    };
+
+    requestAnimationFrame(gameLoop);
+
+
+
+
+
+
+    </script>
+</body>
 </html>
