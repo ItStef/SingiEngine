@@ -106,24 +106,56 @@
             )(nextWorld);
         }
 
-        const spawnEnemyRow = (world, row, collumns) => 
-            Array.from({length: collumns}, (_, collumn) => collumn).reduce((world, column) => {
+        const ENEMEY_LANES = 5;
+        const ENEMY_SIDE_PADDING = 100;
+        const ENEMY_TOP_PADDING = 50;
+        const ENEMY_ROW_SPACING = 60;
+
+        // const spawnEnemyRow = (world, row, collumns) => 
+        //     Array.from({length: collumns}, (_, collumn) => collumn).reduce((world, column) => {
+        //         const [nextWorld, enemyId] = createEntity(world); 
+        //         const offsetX = (Math.random() - 0.5) * 50; //random horizontal offset to make it less uniform
+        //         const x = ENEMY_SIDE_PADDING + column * ENEMY_ROW_SPACING + offsetX;
+        //         const y = ENEMY_TOP_PADDING + row * ENEMY_ROW_SPACING;
+
+        //         return pipe(
+        //             w => addComponent(w, enemyId, 'position', { x, y }),
+        //             w => addComponent(w, enemyId, 'velocity', { velocityX: 40, velocityY: 0 }),
+        //             w => addComponent(w, enemyId, 'render', { shape: 'enemy', color: 'red', width: 40, height: 30 }),
+        //             w => addComponent(w, enemyId, 'enemy', { shootCooldown: Math.random() * 2 + 1 }), //random cooldown between 1 and 3 seconds
+        //             w => addComponent(w, enemyId, 'health', { value: 1 })
+        //         )(nextWorld);
+        //     }, world);
+        const spawnEnemyRow = (world, row, columns) => {
+            const availableLanes = [1, 2, 3, 4, 5];
+            const enemyCount = Math.min(columns, availableLanes.length);
+
+            for (let i = 0; i < enemyCount; i++) {
+                const randomIndex = Math.floor(Math.random() * availableLanes.length);
+                const lane = availableLanes.splice(randomIndex, 1)[0];
+
                 const [nextWorld, enemyId] = createEntity(world);
-                const x = 50 + column * 80;
-                const y = 50 + row * 60;
-                return pipe(
+                const offsetX = (Math.random() - 0.5) * ENEMY_SIDE_PADDING; //random horizontal offset to make it less uniform
+                const x =lane * ENEMY_ROW_SPACING + offsetX;
+                const y = ENEMY_TOP_PADDING + row * ENEMY_ROW_SPACING;
+
+                world = pipe(
                     w => addComponent(w, enemyId, 'position', { x, y }),
                     w => addComponent(w, enemyId, 'velocity', { velocityX: 40, velocityY: 0 }),
                     w => addComponent(w, enemyId, 'render', { shape: 'enemy', color: 'red', width: 40, height: 30 }),
-                    w => addComponent(w, enemyId, 'enemy', { shootCooldown: Math.random() * 2 + 1 }), //random cooldown between 1 and 3 seconds
+                    w => addComponent(w, enemyId, 'enemy', { shootCooldown: Math.random() * 2 + 1 }),
                     w => addComponent(w, enemyId, 'health', { value: 1 })
                 )(nextWorld);
-            }, world);
+            }
+
+            return world;
+        };
+
 
         const initWorld = () => {
             const base = { ...CREATE_WORLD, fallingStarField: makeFallingStars(50) };
             const withPlayer = spawnPlayer(base);
-            return [0, 1, 2].reduce((world, row) => spawnEnemyRow(world, row, 5), withPlayer);
+            return [0, 1, 2].reduce((world, row) => spawnEnemyRow(world, row, Math.floor(Math.random() * 4) + 2), withPlayer);
         }
 
 
@@ -165,6 +197,7 @@
         // Movement
 
         const ENTITY_BOUNCE_MARGIN = 10; // Margin from the edge of the screen where enemies will bounce
+        const ENEMY_BOUNCE_PX = 24;
 
         const movementSystem = deltaTime => world => {
             if (world.gameState !== 'playing') return world;
@@ -195,8 +228,15 @@
         return enemies.reduce((world, enemyId) => {
             const velocity = world.components.velocity[enemyId];
             const position = world.components.position[enemyId];
+            const renderWidth = world.components.render[enemyId]?.width ?? 0;
+
+            const clampedX = Math.max(
+                ENTITY_BOUNCE_MARGIN,
+                Math.min(Width - ENTITY_BOUNCE_MARGIN - renderWidth, position.x)
+            );
+
             return setComponent(setComponent(world, enemyId, 'velocity', { velocityX: -velocity.velocityX, velocityY: 0 }),
-                enemyId, 'position', { x: position.x, y: position.y + 24 });}, moved);
+                enemyId, 'position', { x: clampedX, y: position.y + ENEMY_BOUNCE_PX });}, moved);
 
         };
 
@@ -525,11 +565,6 @@
     };
 
     requestAnimationFrame(gameLoop);
-
-
-
-
-
 
     </script>
 </body>
