@@ -191,7 +191,7 @@
         
         // Shooting
         const BULLET_SPEED = 300;
-        const SHOOT_COOLDOWN = 0.5; // seconds
+        const SHOOT_COOLDOWN = 0.25; // seconds
         
         const spawnBullet = (world, x, y, velocityY, owner, color) => {
             const [nextWorld, bulletId] = createEntity(world);
@@ -302,7 +302,7 @@
 
         const remainingEnemies = query(w, 'enemy');
         if (remainingEnemies.length === 0 && w.gameState === 'playing') {
-            w = { ...w, gameState: 'gameover', score: w.score + w.lives * 200 };
+            w = { ...w, gameState: 'gameover' };
         }
         return w;
     }
