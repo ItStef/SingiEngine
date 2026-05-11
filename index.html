@@ -9,8 +9,7 @@
     <canvas id="game"></canvas>
     <div id="hint">
     <span>Arrow keys / WASD</span> — Move &nbsp;|&nbsp;
-    <span>Space</span> — Shoot &nbsp;|&nbsp;
-    <span>Enter</span> — Restart
+    <span>Space</span> — Shoot
     </div>
 
     <script>
@@ -414,6 +413,8 @@
     // --- Entities with render + position ---
     const renderables = query(world, 'render', 'position');
     renderables.forEach(eid => {
+        if (world.gameState == 'menu') return; //skip rendering entities when in menu
+
         const { x, y }      = world.components.position[eid];
         const { shape, color, width, height } = world.components.render[eid];
 
@@ -424,7 +425,7 @@
 
     // --- HUD: Score ---
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 18px Segoe UI';
+    ctx.font = 'bold 18px Arial';
     ctx.textAlign = 'left';
     ctx.fillText(`Score: ${world.score}`, 12, 24);
 
@@ -443,24 +444,20 @@
         ctx.fillRect(0, 0, Width, Height);
 
         ctx.fillStyle = 'cyan';
-        ctx.font = 'bold 48px Segoe UI';
+        ctx.font = 'bold 48px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText('SingiEngine', Width / 2, Height / 2 - 60);
-
-        ctx.fillStyle = '#aaa';
-        ctx.font = '16px Segoe UI';
-        ctx.fillText('Arrow keys / WASD — Move  |  Space — Shoot', Width / 2, Height / 2);
+        ctx.fillText('Space Shooter', Width / 2, Height / 2 - 60);
 
         // Play button
         ctx.strokeStyle = '#4f4';
         ctx.lineWidth = 2;
         ctx.strokeRect(Width / 2 - 70, Height / 2 + 60, 140, 44);
         ctx.fillStyle = '#4f4';
-        ctx.font = 'bold 22px Segoe UI';
+        ctx.font = 'bold 22px Arial';
         ctx.fillText('▶  PLAY', Width / 2, Height / 2 + 89);
 
         ctx.fillStyle = '#555';
-        ctx.font = '14px Segoe UI';
+        ctx.font = '14px Arial';
         ctx.fillText('or press Enter', Width / 2, Height / 2 + 128);
     }
 
@@ -469,12 +466,12 @@
         ctx.fillRect(0, 0, Width, Height);
 
         ctx.fillStyle = '#4f4';
-        ctx.font = 'bold 48px Segoe UI';
+        ctx.font = 'bold 48px Arial';
         ctx.textAlign = 'center';
         ctx.fillText('YOU WIN!', Width / 2, Height / 2 - 20);
 
         ctx.fillStyle = '#aaa';
-        ctx.font = '20px Segoe UI';
+        ctx.font = '20px Arial';
         ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
         ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
     }
@@ -484,12 +481,12 @@
         ctx.fillRect(0, 0, Width, Height);
 
         ctx.fillStyle = '#f44';
-        ctx.font = 'bold 48px Segoe UI';
+        ctx.font = 'bold 48px Arial';
         ctx.textAlign = 'center';
         ctx.fillText('GAME OVER', Width / 2, Height / 2 - 20);
 
         ctx.fillStyle = '#aaa';
-        ctx.font = '20px Segoe UI';
+        ctx.font = '20px Arial';
         ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
         ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
     }
