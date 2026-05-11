@@ -187,8 +187,9 @@
                 let newY = position.y + velocity.velocityY * deltaTime;
 
                 if (entityId in world.components.player) {
-                    newX = Math.max(0, Math.min(Width - world.components.render[entityId].width, newX));
-                    newY = Math.max(0, Math.min(Height - world.components.render[entityId].height, newY));
+                    const { width, height } = world.components.render[entityId];
+                    newX = Math.max(width / 2, Math.min(Width - width / 2, newX));
+                    newY = Math.max(height / 2, Math.min(Height - height / 2, newY));
                 }
                 return setComponent(setComponent(world, entityId, 'position', { x: newX, y: newY }), entityId, 'velocity', { velocityX: velocity.velocityX, velocityY: velocity.velocityY });
             }, world);
@@ -200,13 +201,12 @@
             const velocity = world.components.velocity[enemyId];
             const renderWidth = world.components.render[enemyId]?.width ?? 0;
 
-            const hitLeft  = position.x <= Width - ENTITY_BOUNCE_MARGIN - renderWidth;
-            const hitRight = position.x >= Width - ENTITY_BOUNCE_MARGIN - renderWidth;
+            const hitLeft  = position.x - renderWidth / 2 <= ENTITY_BOUNCE_MARGIN;
+            const hitRight = position.x + renderWidth / 2 >= Width - ENTITY_BOUNCE_MARGIN;
 
             if (!hitLeft && !hitRight) return world;
 
-            const clampedX = Math.max(ENTITY_BOUNCE_MARGIN, Math.min(Width - ENTITY_BOUNCE_MARGIN - renderWidth, position.x));
-
+            const clampedX = Math.max(ENTITY_BOUNCE_MARGIN + renderWidth / 2, Math.min(Width - ENTITY_BOUNCE_MARGIN - renderWidth / 2, position.x));
             return setComponent(
                 setComponent(world, enemyId, 'velocity', { velocityX: -velocity.velocityX, velocityY: 0 }),
                 enemyId, 'position', { x: clampedX, y: position.y }
@@ -464,6 +464,20 @@
         ctx.fillText('or press Enter', Width / 2, Height / 2 + 128);
     }
 
+    if (world.gameState === 'win') {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(0, 0, Width, Height);
+
+        ctx.fillStyle = '#4f4';
+        ctx.font = 'bold 48px Segoe UI';
+        ctx.textAlign = 'center';
+        ctx.fillText('YOU WIN!', Width / 2, Height / 2 - 20);
+
+        ctx.fillStyle = '#aaa';
+        ctx.font = '20px Segoe UI';
+        ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
+        ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
+    }
 
     if (world.gameState === 'gameover') {
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
