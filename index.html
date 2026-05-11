@@ -106,57 +106,34 @@
             )(nextWorld);
         }
 
-        const ENEMEY_LANES = 5;
-        const ENEMY_SIDE_PADDING = 100;
-        const ENEMY_TOP_PADDING = 50;
-        const ENEMY_ROW_SPACING = 60;
+        const ENEMY_COUNT_MIN = 6;
+        const ENEMY_COUNT_MAX = 12;
+        const ENEMY_SPAWN_PADDING = 40;
 
-        // const spawnEnemyRow = (world, row, collumns) => 
-        //     Array.from({length: collumns}, (_, collumn) => collumn).reduce((world, column) => {
-        //         const [nextWorld, enemyId] = createEntity(world); 
-        //         const offsetX = (Math.random() - 0.5) * 50; //random horizontal offset to make it less uniform
-        //         const x = ENEMY_SIDE_PADDING + column * ENEMY_ROW_SPACING + offsetX;
-        //         const y = ENEMY_TOP_PADDING + row * ENEMY_ROW_SPACING;
+        const spawnEnemies = world => {
+            const count = Math.floor(Math.random() * (ENEMY_COUNT_MAX - ENEMY_COUNT_MIN + 1)) + ENEMY_COUNT_MIN;
 
-        //         return pipe(
-        //             w => addComponent(w, enemyId, 'position', { x, y }),
-        //             w => addComponent(w, enemyId, 'velocity', { velocityX: 40, velocityY: 0 }),
-        //             w => addComponent(w, enemyId, 'render', { shape: 'enemy', color: 'red', width: 40, height: 30 }),
-        //             w => addComponent(w, enemyId, 'enemy', { shootCooldown: Math.random() * 2 + 1 }), //random cooldown between 1 and 3 seconds
-        //             w => addComponent(w, enemyId, 'health', { value: 1 })
-        //         )(nextWorld);
-        //     }, world);
-        const spawnEnemyRow = (world, row, columns) => {
-            const availableLanes = [1, 2, 3, 4, 5];
-            const enemyCount = Math.min(columns, availableLanes.length);
-
-            for (let i = 0; i < enemyCount; i++) {
-                const randomIndex = Math.floor(Math.random() * availableLanes.length);
-                const lane = availableLanes.splice(randomIndex, 1)[0];
-
+            for (let i = 0; i < count; i++) {
                 const [nextWorld, enemyId] = createEntity(world);
-                const offsetX = (Math.random() - 0.5) * ENEMY_SIDE_PADDING; //random horizontal offset to make it less uniform
-                const x =lane * ENEMY_ROW_SPACING + offsetX;
-                const y = ENEMY_TOP_PADDING + row * ENEMY_ROW_SPACING;
+                const x = ENEMY_SPAWN_PADDING + Math.random() * (Width - ENEMY_SPAWN_PADDING * 2);
+                const y = ENEMY_SPAWN_PADDING + Math.random() * (Height / 2 - ENEMY_SPAWN_PADDING);
+                const dirX = Math.random() < 0.5 ? ENEMY_SPAWN_PADDING : -ENEMY_SPAWN_PADDING;
 
                 world = pipe(
                     w => addComponent(w, enemyId, 'position', { x, y }),
-                    w => addComponent(w, enemyId, 'velocity', { velocityX: 40, velocityY: 0 }),
+                    w => addComponent(w, enemyId, 'velocity', { velocityX: dirX, velocityY: 0 }),
                     w => addComponent(w, enemyId, 'render', { shape: 'enemy', color: 'red', width: 40, height: 30 }),
                     w => addComponent(w, enemyId, 'enemy', { shootCooldown: Math.random() * 2 + 1 }),
                     w => addComponent(w, enemyId, 'health', { value: 1 })
                 )(nextWorld);
             }
-
             return world;
         };
 
-
         const initWorld = () => {
             const base = { ...CREATE_WORLD, fallingStarField: makeFallingStars(50) };
-            const withPlayer = spawnPlayer(base);
-            return [0, 1, 2].reduce((world, row) => spawnEnemyRow(world, row, Math.floor(Math.random() * 4) + 2), withPlayer);
-        }
+            return spawnEnemies(spawnPlayer(base));
+        };
 
 
         // Inputs
@@ -217,29 +194,25 @@
             }, world);
 
         const enemies = query(moved, 'enemy', 'position', 'velocity');
-        const hitAWall = enemies.some(enemyId => {
-            const position = moved.components.position[enemyId];
-            const velocity = moved.components.velocity[enemyId];
-            return position.x <= ENTITY_BOUNCE_MARGIN || position.x >= Width - ENTITY_BOUNCE_MARGIN - (moved.components.render[enemyId]?.width ?? 0);
-        });
-
-        if(!hitAWall) return moved;
 
         return enemies.reduce((world, enemyId) => {
-            const velocity = world.components.velocity[enemyId];
             const position = world.components.position[enemyId];
+            const velocity = world.components.velocity[enemyId];
             const renderWidth = world.components.render[enemyId]?.width ?? 0;
 
-            const clampedX = Math.max(
-                ENTITY_BOUNCE_MARGIN,
-                Math.min(Width - ENTITY_BOUNCE_MARGIN - renderWidth, position.x)
+            const hitLeft  = position.x <= Width - ENTITY_BOUNCE_MARGIN - renderWidth;
+            const hitRight = position.x >= Width - ENTITY_BOUNCE_MARGIN - renderWidth;
+
+            if (!hitLeft && !hitRight) return world;
+
+            const clampedX = Math.max(ENTITY_BOUNCE_MARGIN, Math.min(Width - ENTITY_BOUNCE_MARGIN - renderWidth, position.x));
+
+            return setComponent(
+                setComponent(world, enemyId, 'velocity', { velocityX: -velocity.velocityX, velocityY: 0 }),
+                enemyId, 'position', { x: clampedX, y: position.y }
             );
-
-            return setComponent(setComponent(world, enemyId, 'velocity', { velocityX: -velocity.velocityX, velocityY: 0 }),
-                enemyId, 'position', { x: clampedX, y: position.y + ENEMY_BOUNCE_PX });}, moved);
-
+        }, moved);
         };
-
         
         // Shooting
         const BULLET_SPEED = 300;
@@ -354,7 +327,7 @@
 
         const remainingEnemies = query(w, 'enemy');
         if (remainingEnemies.length === 0 && w.gameState === 'playing') {
-            w = { ...w, gameState: 'win' };
+            w = spawnEnemies(w);
         }
         return w;
     }
@@ -491,20 +464,6 @@
         ctx.fillText('or press Enter', Width / 2, Height / 2 + 128);
     }
 
-    if (world.gameState === 'win') {
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(0, 0, Width, Height);
-
-        ctx.fillStyle = '#4f4';
-        ctx.font = 'bold 48px Segoe UI';
-        ctx.textAlign = 'center';
-        ctx.fillText('YOU WIN!', Width / 2, Height / 2 - 20);
-
-        ctx.fillStyle = '#aaa';
-        ctx.font = '20px Segoe UI';
-        ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
-        ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
-    }
 
     if (world.gameState === 'gameover') {
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
