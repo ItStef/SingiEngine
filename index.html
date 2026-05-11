@@ -59,7 +59,7 @@
                 shootCooldown: {},
             },
             score: 0,
-            gameState: 'playing', // 'playing' | 'gameover'
+            gameState: 'menu', // 'menu' | 'playing' | 'gameover' | 'win'
             fallingStarField: [],
         }
 
@@ -136,6 +136,18 @@
             }
         });
         window.addEventListener('keyup', event => { keysDown.delete(event.code) });
+
+        canvas.addEventListener('click', event => {
+            if (world.gameState !== 'menu') return;
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = Width / rect.width;
+            const scaleY = Height / rect.height;
+            const cx = (event.clientX - rect.left) * scaleX;
+            const cy = (event.clientY - rect.top) * scaleY;
+            if (cx >= Width/2 - 70 && cx <= Width/2 + 70 && cy >= Height/2 + 60 && cy <= Height/2 + 104) {
+                world = { ...initWorld(), gameState: 'playing' };
+            }
+        });
 
         const PLAYER_SPEED = 220; // pixels per second
 
@@ -302,7 +314,7 @@
 
         const remainingEnemies = query(w, 'enemy');
         if (remainingEnemies.length === 0 && w.gameState === 'playing') {
-            w = { ...w, gameState: 'gameover' };
+            w = { ...w, gameState: 'win' };
         }
         return w;
     }
@@ -413,31 +425,72 @@
     }
 
     // --- Game Over / Win overlay ---
-    if (world.gameState === 'gameover') {
+    if (world.gameState === 'menu') {
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.fillRect(0, 0, Width, Height);
+
+        ctx.fillStyle = 'cyan';
+        ctx.font = 'bold 48px Segoe UI';
+        ctx.textAlign = 'center';
+        ctx.fillText('SingiEngine', Width / 2, Height / 2 - 60);
+
+        ctx.fillStyle = '#aaa';
+        ctx.font = '16px Segoe UI';
+        ctx.fillText('Arrow keys / WASD — Move  |  Space — Shoot', Width / 2, Height / 2);
+
+        // Play button
+        ctx.strokeStyle = '#4f4';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(Width / 2 - 70, Height / 2 + 60, 140, 44);
+        ctx.fillStyle = '#4f4';
+        ctx.font = 'bold 22px Segoe UI';
+        ctx.fillText('▶  PLAY', Width / 2, Height / 2 + 89);
+
+        ctx.fillStyle = '#555';
+        ctx.font = '14px Segoe UI';
+        ctx.fillText('or press Enter', Width / 2, Height / 2 + 128);
+    }
+
+    if (world.gameState === 'win') {
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
         ctx.fillRect(0, 0, Width, Height);
 
-        const remaining = query(world, 'enemy');
-        const msg = remaining.length === 0 ? 'YOU WIN!' : 'GAME OVER';
-        const col = remaining.length === 0 ? '#4f4' : '#f44';
-
-        ctx.fillStyle = col;
+        ctx.fillStyle = '#4f4';
         ctx.font = 'bold 48px Segoe UI';
         ctx.textAlign = 'center';
-        ctx.fillText(msg, Width / 2, Height / 2 - 20);
+        ctx.fillText('YOU WIN!', Width / 2, Height / 2 - 20);
 
         ctx.fillStyle = '#aaa';
         ctx.font = '20px Segoe UI';
         ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
-        ctx.fillText('Press Enter to restart', Width / 2, Height / 2 + 56);
+        ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
     }
-        return world;
+
+    if (world.gameState === 'gameover') {
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(0, 0, Width, Height);
+
+        ctx.fillStyle = '#f44';
+        ctx.font = 'bold 48px Segoe UI';
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', Width / 2, Height / 2 - 20);
+
+        ctx.fillStyle = '#aaa';
+        ctx.font = '20px Segoe UI';
+        ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
+        ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
+    }
+    return world;
     };
 
     //Restart
 
     const restartSystem = _ => world => {
-        if (world.gameState === 'gameover' && keysDown.has('Enter')) {
+        if (world.gameState === 'menu' && keysDown.has('Enter')) {
+            keysDown.delete('Enter');
+            return { ...initWorld(), gameState: 'playing' };
+        }
+        if ((world.gameState === 'gameover' || world.gameState === 'win') && keysDown.has('Enter')) {
             keysDown.delete('Enter');
             return initWorld();
         }
