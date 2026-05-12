@@ -137,15 +137,17 @@
         });
         window.addEventListener('keyup', event => { keysDown.delete(event.code) });
 
+        let pendingStart = false;
+
         canvas.addEventListener('click', event => {
-            if (world.gameState !== 'menu') return;
+            if (world.gameState !== 'menu') return; // still need world readable, but don't write it
             const rect = canvas.getBoundingClientRect();
             const scaleX = Width / rect.width;
             const scaleY = Height / rect.height;
             const cx = (event.clientX - rect.left) * scaleX;
             const cy = (event.clientY - rect.top) * scaleY;
             if (cx >= Width/2 - 70 && cx <= Width/2 + 70 && cy >= Height/2 + 60 && cy <= Height/2 + 104) {
-                world = { ...initWorld(), gameState: 'playing' };
+                pendingStart = true; // ✅ only set a flag, don't touch world
             }
         });
 
@@ -174,14 +176,13 @@
             const moved = movers.reduce((world, entityId) => {
                 const position = world.components.position[entityId];
                 const velocity = world.components.velocity[entityId];
-                let newX = position.x + velocity.velocityX * deltaTime;
-                let newY = position.y + velocity.velocityY * deltaTime;
+                const rawX = position.x + velocity.velocityX * deltaTime;
+                const rawY = position.y + velocity.velocityY * deltaTime;
+                const isPlayer = entityId in world.components.player;
 
-                if (entityId in world.components.player) {
-                    const { width, height } = world.components.render[entityId];
-                    newX = Math.max(width / 2, Math.min(Width - width / 2, newX));
-                    newY = Math.max(height / 2, Math.min(Height - height / 2, newY));
-                }
+                const { width, height } = world.components.render[entityId];
+                const newX = isPlayer ? Math.max(width / 2, Math.min(Width - width / 2, rawX)) : rawX;
+                const newY = isPlayer ? Math.max(height / 2, Math.min(Height - height / 2, rawY)) : rawY;
                 return setComponent(setComponent(world, entityId, 'position', { x: newX, y: newY }), entityId, 'velocity', { velocityX: velocity.velocityX, velocityY: velocity.velocityY });
             }, world);
 
@@ -401,16 +402,18 @@
 
         // --- Entities with render + position ---
         const renderables = query(world, 'render', 'position');
-        renderables.forEach(eid => {
-            if (world.gameState === 'menu') return; //skip rendering entities when in menu
+        const drawFunctions = { ship: drawShip, enemy: drawEnemy, bullet: drawBullet };
 
-            const { x, y }      = world.components.position[eid];
-            const { shape, color, width, height } = world.components.render[eid];
-
-            if (shape === 'ship')   drawShip(ctx, x, y, width, height, color);
-            if (shape === 'enemy')  drawEnemy(ctx, x, y, width, height, color);
-            if (shape === 'bullet') drawBullet(ctx, x, y, width, height, color);
-        });
+        renderables
+            .filter(eid => world.gameState !== 'menu')
+            .map(eid => ({
+                fn:     drawFunctions[world.components.render[eid].shape],
+                args:   [ctx, world.components.position[eid].x, world.components.position[eid].y,
+                        world.components.render[eid].width, world.components.render[eid].height,
+                        world.components.render[eid].color]
+            }))
+            .filter(({ fn }) => fn)
+            .map(({ fn, args }) => fn(...args)); 
 
         // --- HUD: Score ---
         ctx.fillStyle = '#fff';
@@ -485,9 +488,8 @@
         //Restart
 
         const restartSystem = _ => world => {
-            if (world.gameState === 'menu' && keysDown.has('Enter')) {
-                // schedule deletion after the pipeline, not inside it
-                requestAnimationFrame(() => keysDown.delete('Enter'));
+            if (world.gameState === 'menu' && (keysDown.has('Enter') || pendingStart)) {
+                requestAnimationFrame(() => { keysDown.delete('Enter'); pendingStart = false; });
                 return { ...initWorld(), gameState: 'playing' };
             }
             if ((world.gameState === 'gameover' || world.gameState === 'win') && keysDown.has('Enter')) {
@@ -498,8 +500,6 @@
         };
 
         // Main Loop
-        let world = initWorld();
-        let lastTime = null;
 
         const buildPipeline = deltaTime => pipe(
             restartSystem(deltaTime),
@@ -513,18 +513,14 @@
             renderSystem(deltaTime), 
         );
 
-        const gameLoop = timestamp => {
-        if (lastTime === null) lastTime = timestamp;
-        const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap dt to avoid spiral of death
-        lastTime = timestamp;
-
-        // The entire game update is a single pure pipeline call
-        world = buildPipeline(dt)(world);
-
-        requestAnimationFrame(gameLoop);
+        const gameLoop = (world, lastTime) => timestamp => {
+            const resolvedLast = lastTime ?? timestamp;
+            const dt = Math.min((timestamp - resolvedLast) / 1000, 0.05);
+            const nextWorld = buildPipeline(dt)(world);
+            requestAnimationFrame(gameLoop(nextWorld, timestamp));
         };
 
-        requestAnimationFrame(gameLoop);
+        requestAnimationFrame(gameLoop(initWorld(), null));
 
     </script>
 </body>
