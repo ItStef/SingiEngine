@@ -128,6 +128,7 @@
 
 
         // Inputs
+        const clickInput = { pendingStart: false };
         const keysDown = new Set();
         window.addEventListener('keydown', event => {
             keysDown.add(event.code);
@@ -137,17 +138,15 @@
         });
         window.addEventListener('keyup', event => { keysDown.delete(event.code) });
 
-        let pendingStart = false;
 
         canvas.addEventListener('click', event => {
-            if (world.gameState !== 'menu') return; // still need world readable, but don't write it
             const rect = canvas.getBoundingClientRect();
             const scaleX = Width / rect.width;
             const scaleY = Height / rect.height;
             const cx = (event.clientX - rect.left) * scaleX;
             const cy = (event.clientY - rect.top) * scaleY;
             if (cx >= Width/2 - 70 && cx <= Width/2 + 70 && cy >= Height/2 + 60 && cy <= Height/2 + 104) {
-                pendingStart = true; // ✅ only set a flag, don't touch world
+                clickInput.pendingStart = true; 
             }
         });
 
@@ -234,7 +233,7 @@
                     const worldBullet = spawnBullet(worldCoolDown, position.x, position.y - 30, -BULLET_SPEED, 'player', 'cyan');
                     return setComponent(worldBullet, entityId, 'shootCooldown', { cooldown: SHOOT_COOLDOWN });
                 }
-            return worldCoolDown;
+                return worldCoolDown;
             }, world);
         };
 
@@ -488,12 +487,12 @@
         //Restart
 
         const restartSystem = _ => world => {
-            if (world.gameState === 'menu' && (keysDown.has('Enter') || pendingStart)) {
-                requestAnimationFrame(() => { keysDown.delete('Enter'); pendingStart = false; });
+            if (world.gameState === 'menu' && (keysDown.has('Enter') || clickInput.pendingStart)) {
+                clickInput.pendingStart = false;
                 return { ...initWorld(), gameState: 'playing' };
             }
             if ((world.gameState === 'gameover' || world.gameState === 'win') && keysDown.has('Enter')) {
-                requestAnimationFrame(() => keysDown.delete('Enter'));
+                keysDown.delete('Enter');
                 return initWorld();
             }
             return world;
