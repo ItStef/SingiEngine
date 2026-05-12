@@ -23,7 +23,6 @@
 
         // Utils
         const pipe = (...functions) => arg => functions.reduce((variable, func) => func(variable), arg);
-        const compare = (...functions) => arg => functions.reduceRight((variable, func) => func(variable), arg); //backwards pipe
 
         const setComponent = (world, entityId, componentName, data) => ({
             ...world, components: {...world.components,
@@ -32,12 +31,9 @@
         });
 
         const removeComponent = (world, entityId, componentName) => {
-            const next = { ...world.components[componentName] };
-            delete next[entityId];
-            return {...world, components: {...world.components,[componentName]: next}
-            };
-        }
-
+            const { [entityId]: _, ...rest } = world.components[componentName];
+            return { ...world, components: { ...world.components, [componentName]: rest } };
+        };
         const query = (world, ...componentNames) => 
             world.entities.filter(entityId => componentNames.reduce((has, component) => 
             has && entityId in world.components[component], true));
@@ -72,10 +68,9 @@
             setComponent(world, entityId, componentName, data);
         
         const destroyEntity = (world, entityId) => {
-            const components = Object.keys(world.components).reduce((accumilator, componentName) => {
-                const map = { ...world.components[componentName] };
-                delete map[entityId];
-                return { ...accumilator, [componentName]: map };
+            const components = Object.keys(world.components).reduce((acc, componentName) => {
+                const { [entityId]: _, ...rest } = world.components[componentName];
+                return { ...acc, [componentName]: rest };
             }, {});
             return {
                 ...world,
@@ -111,22 +106,19 @@
 
         const spawnEnemies = world => {
             const count = Math.floor(Math.random() * (ENEMY_COUNT_MAX - ENEMY_COUNT_MIN + 1)) + ENEMY_COUNT_MIN;
-
-            for (let i = 0; i < count; i++) {
-                const [nextWorld, enemyId] = createEntity(world);
-                const x = ENEMY_SPAWN_PADDING + Math.random() * (Width - ENEMY_SPAWN_PADDING * 2);
-                const y = ENEMY_SPAWN_PADDING + Math.random() * (Height / 2 - ENEMY_SPAWN_PADDING);
+            return Array.from({ length: count }).reduce(currentWorld => {
+                const [nextWorld, enemyId] = createEntity(currentWorld);
+                const x    = ENEMY_SPAWN_PADDING + Math.random() * (Width - ENEMY_SPAWN_PADDING * 2);
+                const y    = ENEMY_SPAWN_PADDING + Math.random() * (Height / 2 - ENEMY_SPAWN_PADDING);
                 const dirX = Math.random() < 0.5 ? ENEMY_SPAWN_PADDING : -ENEMY_SPAWN_PADDING;
-
-                world = pipe(
+                return pipe(
                     w => addComponent(w, enemyId, 'position', { x, y }),
                     w => addComponent(w, enemyId, 'velocity', { velocityX: dirX, velocityY: 0 }),
-                    w => addComponent(w, enemyId, 'render', { shape: 'enemy', color: 'red', width: 40, height: 30 }),
-                    w => addComponent(w, enemyId, 'enemy', { shootCooldown: Math.random() * 2 + 1 }),
-                    w => addComponent(w, enemyId, 'health', { value: 1 })
+                    w => addComponent(w, enemyId, 'render',   { shape: 'enemy', color: 'red', width: 40, height: 30 }),
+                    w => addComponent(w, enemyId, 'enemy',    { shootCooldown: Math.random() * 2 + 1 }),
+                    w => addComponent(w, enemyId, 'health',   { value: 1 })
                 )(nextWorld);
-            }
-            return world;
+            }, world);
         };
 
         const initWorld = () => {
@@ -272,269 +264,267 @@
         const aabb = (ax , ay, aw, ah, bx, by, bw, bh) => ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 
         const collisionSystem = _ => world => {
-            if (world.gameState !== 'playing') return world;
+        if (world.gameState !== 'playing') return world;
 
-            const bullets = query(world, 'bullet', 'position');
-            const enemies = query(world, 'enemy', 'position', 'render');
-            const players = query(world, 'player', 'position', 'render', 'health');
+        const bullets = query(world, 'bullet', 'position');
+        const enemies = query(world, 'enemy',  'position', 'render');
+        const players = query(world, 'player', 'position', 'render', 'health');
 
-            let w = world;
-            let toDestroy = []
+        const playerBullets = bullets.filter(id => world.components.bullet[id]?.owner === 'player');
+        const enemyBullets  = bullets.filter(id => world.components.bullet[id]?.owner === 'enemy');
 
-            const playerBullets = bullets.filter(bulletId => w.components.bullet[bulletId]?.owner === 'player');
+        const { world: w1, toDestroy: td1 } = playerBullets.reduce(
+            ({ world: w, toDestroy }, bulletId) => {
+                const bPos = w.components.position[bulletId];
+                const bRen = w.components.render[bulletId];
+                return enemies.reduce(({ world: w2, toDestroy: td }, enemyId) => {
+                    if (td.includes(enemyId) || td.includes(bulletId)) return { world: w2, toDestroy: td };
+                    const ePos = w2.components.position[enemyId];
+                    const eRen = w2.components.render[enemyId];
+                    if (aabb(bPos.x, bPos.y, bRen.width, bRen.height, ePos.x, ePos.y, eRen.width, eRen.height)) {
+                        return { world: { ...w2, score: w2.score + 100 }, toDestroy: [...td, bulletId, enemyId] };
+                    }
+                    return { world: w2, toDestroy: td };
+                }, { world: w, toDestroy });
+            },
+            { world, toDestroy: [] }
+        );
 
-            playerBullets.forEach(bulletId => {
-                const bulletPosition = w.components.position[bulletId];
-                const bulletRender = w.components.render[bulletId];
+        // Enemy bullets vs player — pure reduce, no mutation
+        const { world: w2, toDestroy: td2 } = players.reduce(
+            ({ world: w, toDestroy }, playerId) => {
+                const pPos = w.components.position[playerId];
+                const pRen = w.components.render[playerId];
+                return enemyBullets.reduce(({ world: w2, toDestroy: td }, bulletId) => {
+                    if (td.includes(playerId) || td.includes(bulletId)) return { world: w2, toDestroy: td };
+                    const bPos = w2.components.position[bulletId];
+                    const bRen = w2.components.render[bulletId];
+                    if (aabb(bPos.x, bPos.y, bRen.width, bRen.height, pPos.x, pPos.y, pRen.width, pRen.height)) {
+                        const newHealth = w2.components.health[playerId].value - 1;
+                        const newWorld  = newHealth <= 0
+                            ? { ...destroyEntity(w2, playerId), gameState: 'gameover' }
+                            : setComponent(w2, playerId, 'health', { value: newHealth });
+                        return { world: newWorld, toDestroy: [...td, bulletId] };
+                    }
+                    return { world: w2, toDestroy: td };
+                }, { world: w, toDestroy });
+            },
+            { world: w1, toDestroy: td1 }
+        );
 
-                enemies.forEach(enemyId => {
-                    if (toDestroy.includes(enemyId) || toDestroy.includes(bulletId)) return; //skip already destroyed enemies
-                    const enemyPosition = w.components.position[enemyId];
-                    const enemyRender = w.components.render[enemyId];
+        const finalWorld = td2.reduce((w, id) => destroyEntity(w, id), w2);
 
-                    if (aabb(bulletPosition.x, bulletPosition.y, bulletRender.width, bulletRender.height,
-                            enemyPosition.x, enemyPosition.y, enemyRender.width, enemyRender.height)) {
-                        toDestroy.push(bulletId, enemyId);
-                        w = { ...w, score: w.score + 100 };
-                };
+        const remainingEnemies = query(finalWorld, 'enemy');
+        return remainingEnemies.length === 0 && finalWorld.gameState === 'playing'
+            ? spawnEnemies(finalWorld)
+            : finalWorld;
+    };
+
+
+        //Bullet Cleanup
+
+        const bulletCleanupSystem = _ => world => {
+            const bullets = query(world, 'bullet', 'position', 'render');
+            const offscreen = bullets.filter(bid => {
+                const pos = world.components.position[bid];
+                return pos.y < -20 || pos.y > Height + 20;
             });
-        });
-        
-        const enemyBullets = bullets.filter(bulletId => w.components.bullet[bulletId]?.owner === 'enemy');
-
-        players.forEach(playerId => {
-            const playerPosition = w.components.position[playerId];
-            const playerRender = w.components.render[playerId];
-
-            enemyBullets.forEach(bulletId => {
-                if (toDestroy.includes(playerId) || toDestroy.includes(bulletId)) return; //skip already destroyed players
-                const bulletPosition = w.components.position[bulletId];
-                const bulletRender = w.components.render[bulletId];
-
-                if (aabb(bulletPosition.x, bulletPosition.y, bulletRender.width, bulletRender.height,
-                        playerPosition.x, playerPosition.y, playerRender.width, playerRender.height)) {
-                    toDestroy.push(bulletId);
-                    const newHealth = w.components.health[playerId].value - 1;
-                w = newHealth <= 0
-                    ? { ...destroyEntity(w, playerId), gameState: 'gameover' }
-                    : setComponent(w, playerId, 'health', { value: newHealth });
-                }
-            });
-        });
-
-        w = toDestroy.reduce((w, entityId) => destroyEntity(w, entityId), w);
-
-        const remainingEnemies = query(w, 'enemy');
-        if (remainingEnemies.length === 0 && w.gameState === 'playing') {
-            w = spawnEnemies(w);
+            return offscreen.reduce((world, bid) => destroyEntity(world, bid), world);
         }
-        return w;
-    }
 
 
-    //Bullet Cleanup
+        //Star System
 
-    const bulletCleanupSystem = _ => world => {
-        const bullets = query(world, 'bullet', 'position', 'render');
-        const offscreen = bullets.filter(bid => {
-            const pos = world.components.position[bid];
-            return pos.y < -20 || pos.y > Height + 20;
+        const tickStars = deltaTime => world => ({
+            ...world,
+            fallingStarField: world.fallingStarField.map(star => ({
+                ...star,
+                y: (star.y + star.speed * deltaTime * 60) % Height
+            }))
         });
-        return offscreen.reduce((world, bid) => destroyEntity(world, bid), world);
-    }
 
 
-    //Star System
-
-    const tickStars = deltaTime => world => ({
-        ...world,
-        fallingStarField: world.fallingStarField.map(star => ({
-            ...star,
-            y: (star.y + star.speed * deltaTime * 60) % Height
-        }))
-    });
-
-
-    //Render
-    const drawShip = (ctx, x, y, width, height, color) => {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.fillStyle = color;
-    // Body
-    ctx.beginPath();
-    ctx.moveTo(0, -height / 2);
-    ctx.lineTo(width / 2, height / 2);
-    ctx.lineTo(-width / 2, height / 2);
-    ctx.closePath();
-    ctx.fill();
-    // Engine glow
-    ctx.fillStyle = '#ff0';
-    ctx.fillRect(-6, height / 2 - 6, 12, 8);
-    ctx.restore();
-    };
-
-    const drawEnemy = (ctx, x, y, width, height, color) => {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, width / 2, height / 3, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffd';
-    ctx.beginPath();
-    ctx.ellipse(0, -height / 5, width / 4, height / 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    };
-
-    const drawBullet = (ctx, x, y, width, height, color) => {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.fillStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 8;
-    ctx.fillRect(-width / 2, -height / 2, width, height);
-    ctx.restore();
-    };
-
-    const renderSystem = _ => world => {
-    // --- Background ---
-    ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, Width, Height);
-
-    // --- Stars ---
-    world.fallingStarField.forEach(s => {
-        ctx.fillStyle = `rgba(255,255,255,${0.3 + s.size * 0.3})`;
+        //Render
+        const drawShip = (ctx, x, y, width, height, color) => {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = color;
+        // Body
         ctx.beginPath();
-        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        ctx.moveTo(0, -height / 2);
+        ctx.lineTo(width / 2, height / 2);
+        ctx.lineTo(-width / 2, height / 2);
+        ctx.closePath();
         ctx.fill();
-    });
+        // Engine glow
+        ctx.fillStyle = '#ff0';
+        ctx.fillRect(-6, height / 2 - 6, 12, 8);
+        ctx.restore();
+        };
 
-    // --- Entities with render + position ---
-    const renderables = query(world, 'render', 'position');
-    renderables.forEach(eid => {
-        if (world.gameState == 'menu') return; //skip rendering entities when in menu
+        const drawEnemy = (ctx, x, y, width, height, color) => {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, width / 2, height / 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffd';
+        ctx.beginPath();
+        ctx.ellipse(0, -height / 5, width / 4, height / 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        };
 
-        const { x, y }      = world.components.position[eid];
-        const { shape, color, width, height } = world.components.render[eid];
+        const drawBullet = (ctx, x, y, width, height, color) => {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 8;
+        ctx.fillRect(-width / 2, -height / 2, width, height);
+        ctx.restore();
+        };
 
-        if (shape === 'ship')   drawShip(ctx, x, y, width, height, color);
-        if (shape === 'enemy')  drawEnemy(ctx, x, y, width, height, color);
-        if (shape === 'bullet') drawBullet(ctx, x, y, width, height, color);
-    });
-
-    // --- HUD: Score ---
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 18px Arial';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Score: ${world.score}`, 12, 24);
-
-    // --- HUD: Lives (player health) ---
-    const playerIds = query(world, 'player', 'health');
-    if (playerIds.length > 0) {
-        const health = world.components.health[playerIds[0]].value;
-        ctx.fillStyle = '#f44';
-        ctx.textAlign = 'right';
-        ctx.fillText(`❤ ${health}`, Width - 12, 24);
-    }
-
-    // --- Game Over / Win overlay ---
-    if (world.gameState === 'menu') {
-        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        const renderSystem = _ => world => {
+        // --- Background ---
+        ctx.fillStyle = '#0a0a1a';
         ctx.fillRect(0, 0, Width, Height);
 
-        ctx.fillStyle = 'cyan';
-        ctx.font = 'bold 48px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Space Shooter', Width / 2, Height / 2 - 60);
+        // --- Stars ---
+        world.fallingStarField.forEach(s => {
+            ctx.fillStyle = `rgba(255,255,255,${0.3 + s.size * 0.3})`;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
 
-        // Play button
-        ctx.strokeStyle = '#4f4';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(Width / 2 - 70, Height / 2 + 60, 140, 44);
-        ctx.fillStyle = '#4f4';
-        ctx.font = 'bold 22px Arial';
-        ctx.fillText('▶  PLAY', Width / 2, Height / 2 + 89);
+        // --- Entities with render + position ---
+        const renderables = query(world, 'render', 'position');
+        renderables.forEach(eid => {
+            if (world.gameState === 'menu') return; //skip rendering entities when in menu
 
-        ctx.fillStyle = '#555';
-        ctx.font = '14px Arial';
-        ctx.fillText('or press Enter', Width / 2, Height / 2 + 128);
-    }
+            const { x, y }      = world.components.position[eid];
+            const { shape, color, width, height } = world.components.render[eid];
 
-    if (world.gameState === 'win') {
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(0, 0, Width, Height);
+            if (shape === 'ship')   drawShip(ctx, x, y, width, height, color);
+            if (shape === 'enemy')  drawEnemy(ctx, x, y, width, height, color);
+            if (shape === 'bullet') drawBullet(ctx, x, y, width, height, color);
+        });
 
-        ctx.fillStyle = '#4f4';
-        ctx.font = 'bold 48px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('YOU WIN!', Width / 2, Height / 2 - 20);
+        // --- HUD: Score ---
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 18px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Score: ${world.score}`, 12, 24);
 
-        ctx.fillStyle = '#aaa';
-        ctx.font = '20px Arial';
-        ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
-        ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
-    }
-
-    if (world.gameState === 'gameover') {
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(0, 0, Width, Height);
-
-        ctx.fillStyle = '#f44';
-        ctx.font = 'bold 48px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('GAME OVER', Width / 2, Height / 2 - 20);
-
-        ctx.fillStyle = '#aaa';
-        ctx.font = '20px Arial';
-        ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
-        ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
-    }
-    return world;
-    };
-
-    //Restart
-
-    const restartSystem = _ => world => {
-        if (world.gameState === 'menu' && keysDown.has('Enter')) {
-            keysDown.delete('Enter');
-            return { ...initWorld(), gameState: 'playing' };
+        // --- HUD: Lives (player health) ---
+        const playerIds = query(world, 'player', 'health');
+        if (playerIds.length > 0) {
+            const health = world.components.health[playerIds[0]].value;
+            ctx.fillStyle = '#f44';
+            ctx.textAlign = 'right';
+            ctx.fillText(`❤ ${health}`, Width - 12, 24);
         }
-        if ((world.gameState === 'gameover' || world.gameState === 'win') && keysDown.has('Enter')) {
-            keysDown.delete('Enter');
-            return initWorld();
+
+        // --- Game Over / Win overlay ---
+        if (world.gameState === 'menu') {
+            ctx.fillStyle = 'rgba(0,0,0,0.75)';
+            ctx.fillRect(0, 0, Width, Height);
+
+            ctx.fillStyle = 'cyan';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Space Shooter', Width / 2, Height / 2 - 60);
+
+            // Play button
+            ctx.strokeStyle = '#4f4';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(Width / 2 - 70, Height / 2 + 60, 140, 44);
+            ctx.fillStyle = '#4f4';
+            ctx.font = 'bold 22px Arial';
+            ctx.fillText('▶  PLAY', Width / 2, Height / 2 + 89);
+
+            ctx.fillStyle = '#555';
+            ctx.font = '14px Arial';
+            ctx.fillText('or press Enter', Width / 2, Height / 2 + 128);
+        }
+
+        if (world.gameState === 'win') {
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(0, 0, Width, Height);
+
+            ctx.fillStyle = '#4f4';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('YOU WIN!', Width / 2, Height / 2 - 20);
+
+            ctx.fillStyle = '#aaa';
+            ctx.font = '20px Arial';
+            ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
+            ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
+        }
+
+        if (world.gameState === 'gameover') {
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(0, 0, Width, Height);
+
+            ctx.fillStyle = '#f44';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', Width / 2, Height / 2 - 20);
+
+            ctx.fillStyle = '#aaa';
+            ctx.font = '20px Arial';
+            ctx.fillText(`Final Score: ${world.score}`, Width / 2, Height / 2 + 24);
+            ctx.fillText('Press Enter for Menu', Width / 2, Height / 2 + 56);
         }
         return world;
-    };
+        };
 
-    // Main Loop
-    let world = initWorld();
-    let lastTime = null;
+        //Restart
 
-    const buildPipeline = deltaTime => pipe(
-        restartSystem(deltaTime),
-        inputSystem(deltaTime),
-        movementSystem(deltaTime),
-        shootingSystem(deltaTime),
-        aiSystem(deltaTime),
-        collisionSystem(deltaTime),
-        bulletCleanupSystem(deltaTime),
-        tickStars(deltaTime),
-        renderSystem(deltaTime), 
-    );
+        const restartSystem = _ => world => {
+            if (world.gameState === 'menu' && keysDown.has('Enter')) {
+                // schedule deletion after the pipeline, not inside it
+                requestAnimationFrame(() => keysDown.delete('Enter'));
+                return { ...initWorld(), gameState: 'playing' };
+            }
+            if ((world.gameState === 'gameover' || world.gameState === 'win') && keysDown.has('Enter')) {
+                requestAnimationFrame(() => keysDown.delete('Enter'));
+                return initWorld();
+            }
+            return world;
+        };
 
-    const gameLoop = timestamp => {
-    if (lastTime === null) lastTime = timestamp;
-    const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap dt to avoid spiral of death
-    lastTime = timestamp;
+        // Main Loop
+        let world = initWorld();
+        let lastTime = null;
 
-    // The entire game update is a single pure pipeline call
-    world = buildPipeline(dt)(world);
+        const buildPipeline = deltaTime => pipe(
+            restartSystem(deltaTime),
+            inputSystem(deltaTime),
+            movementSystem(deltaTime),
+            shootingSystem(deltaTime),
+            aiSystem(deltaTime),
+            collisionSystem(deltaTime),
+            bulletCleanupSystem(deltaTime),
+            tickStars(deltaTime),
+            renderSystem(deltaTime), 
+        );
 
-    requestAnimationFrame(gameLoop);
-    };
+        const gameLoop = timestamp => {
+        if (lastTime === null) lastTime = timestamp;
+        const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap dt to avoid spiral of death
+        lastTime = timestamp;
 
-    requestAnimationFrame(gameLoop);
+        // The entire game update is a single pure pipeline call
+        world = buildPipeline(dt)(world);
+
+        requestAnimationFrame(gameLoop);
+        };
+
+        requestAnimationFrame(gameLoop);
 
     </script>
 </body>
